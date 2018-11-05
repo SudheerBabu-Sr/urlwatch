@@ -155,6 +155,36 @@ class Job(JobBase):
         return self.name if self.name else self.get_location()
 
 
+class AsyncJob(Job):
+    """Async job that uses asyncio and requires an event loop"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.loop = None
+
+    def setup(self, loop):
+        """Set the event loop and run other stuff on the main thread before multithreaded job processing"""
+        self.loop = loop
+
+    def retrieve(self, job_state):
+        """
+        Check that the event loop is set and running.
+        Subclasses should call this method (or implement similar checking) before
+        scheduling coroutines on the event loop to prevent deadlock.
+        """
+        if not self.loop:
+            raise RuntimeError('Event loop not set up')
+        if not self.loop.is_running():
+            raise RuntimeError("The event loop must be running when `retrieve` is called on an AsyncJob")
+
+    def cleanup(self):
+        """Called after multithreaded job processing. The event loop should have stopped by this point."""
+        if not self.loop:
+            raise RuntimeError('`setup` must be called before `cleanup`')
+        if self.loop.is_running():
+            raise RuntimeError('The event loop should have stopped before `cleanup` is called')
+
+
 class ShellJob(Job):
     """Run a shell command and get its standard output"""
 
