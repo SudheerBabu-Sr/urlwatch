@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import subprocess
+import asyncio
 import requests
 import urlwatch
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -309,7 +310,7 @@ class UrlJob(Job):
         headers.update(self.headers)
 
 
-class BrowserJob(Job):
+class BrowserJob(AsyncJob):
     """Retrieve an URL, emulating a real web browser"""
 
     __kind__ = 'browser'
@@ -317,12 +318,34 @@ class BrowserJob(Job):
     __required__ = ('navigate',)
 
     LOCATION_IS_URL = True
+    browser = None
+
+    def setup(self, loop):
+        super().setup(loop)
+        # Launch the browser if not already. All BrowserJob instances share the same browser instance
+        if not BrowserJob.browser:
+            import pyppeteer
+            BrowserJob.browser = self.loop.run_until_complete(pyppeteer.launch())
 
     def get_location(self):
         return self.navigate
 
+    @classmethod
+    @asyncio.coroutine
+    def _render(cls, url):
+        context = yield from cls.browser.createIncognitoBrowserContext()
+        page = yield from context.newPage()
+        yield from page.goto(url)
+        content = yield from page.content()
+        yield from context.close()
+        return content
+
     def retrieve(self, job_state):
-        from requests_html import HTMLSession
-        session = HTMLSession()
-        response = session.get(self.navigate)
-        return response.html.html
+        super().retrieve(job_state)
+        return asyncio.run_coroutine_threadsafe(BrowserJob._render(self.navigate), self.loop).result()
+
+    def cleanup(self):
+        super().cleanup()
+        if BrowserJob.browser:
+            self.loop.run_until_complete(BrowserJob.browser.close())
+            BrowserJob.browser = None
