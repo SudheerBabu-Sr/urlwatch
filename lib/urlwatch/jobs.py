@@ -342,7 +342,11 @@ class BrowserJob(AsyncJob):
 
     def retrieve(self, job_state):
         super().retrieve(job_state)
-        return asyncio.run_coroutine_threadsafe(BrowserJob._render(self.navigate), self.loop).result()
+        future = asyncio.run_coroutine_threadsafe(BrowserJob._render(self.navigate), self.loop)
+        exception = future.exception()
+        if exception is not None:
+            raise exception
+        return future.result()
 
     def cleanup(self):
         super().cleanup()
