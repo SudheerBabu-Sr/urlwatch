@@ -317,6 +317,8 @@ class BrowserJob(AsyncJob):
 
     __required__ = ('navigate',)
 
+    __optional__ = ('actions',)
+
     LOCATION_IS_URL = True
     browser = None
 
@@ -325,24 +327,36 @@ class BrowserJob(AsyncJob):
         # Launch the browser if not already. All BrowserJob instances share the same browser instance
         if not BrowserJob.browser:
             import pyppeteer
-            BrowserJob.browser = self.loop.run_until_complete(pyppeteer.launch())
+            BrowserJob.browser = self.loop.run_until_complete(pyppeteer.launch(headless=True))
 
     def get_location(self):
         return self.navigate
 
     @classmethod
-    @asyncio.coroutine
-    def _render(cls, url):
-        context = yield from cls.browser.createIncognitoBrowserContext()
-        page = yield from context.newPage()
-        yield from page.goto(url)
-        content = yield from page.content()
-        yield from context.close()
+    async def _render(cls, url, actions):
+        context = await cls.browser.createIncognitoBrowserContext()
+        page = await context.newPage()
+
+        await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+            (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36')
+        
+        await asyncio.sleep(0.1)
+        await page.goto(url, timeout=60000)
+        
+        if actions:
+            for a in actions:
+                f_name = list(a.keys())[0]
+                f_args = a.get(f_name)
+                function = getattr(page, f_name)
+                await function(*f_args)
+
+        content = await page.content()
+        await context.close()
         return content
 
     def retrieve(self, job_state):
         super().retrieve(job_state)
-        future = asyncio.run_coroutine_threadsafe(BrowserJob._render(self.navigate), self.loop)
+        future = asyncio.run_coroutine_threadsafe(BrowserJob._render(self.navigate, self.actions), self.loop)
         exception = future.exception()
         if exception is not None:
             raise exception
